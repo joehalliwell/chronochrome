@@ -128,8 +128,8 @@ int main (int argc, char* argv[]) {
 			 vinfo.visual,
 			 mask, &xswa);
   
-  XStoreName(dpy, window, "firstxv");
-  XSetIconName(dpy, window, "firstxv");
+  XStoreName(dpy, window, "XV");
+  XSetIconName(dpy, window, "XV");
   
   XSelectInput(dpy, window, StructureNotifyMask);
   

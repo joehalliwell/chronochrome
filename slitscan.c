@@ -22,6 +22,8 @@
 int width = 640;
 int height = 480;
 
+char *video_dev = "/dev/video0";
+
 Display *dpy;
 XvImage *image;
 
@@ -65,7 +67,7 @@ int create_window() {
 
     XSetWindowAttributes xswa = {
         .colormap =  XCreateColormap(dpy, DefaultRootWindow(dpy), vinfo.visual, AllocNone),
-        .event_mask = StructureNotifyMask | ExposureMask,
+        .event_mask = StructureNotifyMask | ExposureMask | KeyPressMask,
         .background_pixel = 0,
         .border_pixel = 0
     };
@@ -81,10 +83,10 @@ int create_window() {
 			 vinfo.visual,
 			 mask, &xswa);
 
-    XStoreName(dpy, window, "firstxv");
-    XSetIconName(dpy, window, "firstxv");
+    XStoreName(dpy, window, "Slitscan demo");
+    XSetIconName(dpy, window, "Slitscan demo");
 
-    XSelectInput(dpy, window, StructureNotifyMask);
+    XSelectInput(dpy, window, StructureNotifyMask | KeyPressMask);
 
     /** Map window */
     XMapWindow(dpy, window);
@@ -97,8 +99,6 @@ int create_window() {
     }
     while (event.type != MapNotify || event.xmap.event != window);
 
-    debug("Window mapped\n");
-
     return 0;
 }
 
@@ -108,13 +108,19 @@ void init_camera() {
 
 
 void main_loop() {
+    XEvent event;
+
+    debug("*** PRESS ANY KEY TO EXIT ***\n");
 
     while (1) {
         //grab_frame();
         //create_frame();
         //push_frame();
+        XNextEvent(dpy, &event);
+        if (event.type == KeyPress) {
+            break;
+        }
     }
-
 }
 
 void shutdown_camera() {
