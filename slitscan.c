@@ -108,9 +108,13 @@ void init_camera() {
 
 
 void main_loop() {
-    //grab_frame();
-    //create_frame();
-    //push_frame();
+
+    while (1) {
+        //grab_frame();
+        //create_frame();
+        //push_frame();
+    }
+
 }
 
 void shutdown_camera() {

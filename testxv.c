@@ -285,7 +285,7 @@ int main (int argc, char* argv[]) {
         XGetGeometry(dpy, window, &_dw, &_d, &_d, &_w, &_h, &_d, &_d);
         for (i = 0; i < yuv_image->height * 1.5; i++) {
             for (j = 0; j < yuv_image->width; j++) {
-                yuv_image->data[yuv_image->width*i + j] = (i*j + joe);
+                yuv_image->data[yuv_image->width*i + j] = (i + j + joe / 5);
             }
         }
    
