@@ -319,7 +319,7 @@ void grab_frame() {
     //
 
     int i, j;
-    for (i = 0; i < image->height * 1.5; i++) {
+    for (i = 0; i < image->height * 2; i++) {
         for (j = 0; j < image->width; j++) {
             image->data[image->width*i + j] = ((char *)buffers[buf.index].start)[width * i + j];
         }
