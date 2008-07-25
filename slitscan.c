@@ -43,7 +43,6 @@ int width = 640;
 int height = 480;
 char *video_dev = "/dev/video0";
 
-int show_hud = 1;
 
 struct buffer {
         void *                  start;
@@ -418,6 +417,9 @@ int duration = 640;
     fd_set fds;
     struct timeval tv;
     int r;
+    int mode = 0;
+    int grab = 1;
+    int hud = 1;
 
     timecube = malloc(tc_size * 4);
 
@@ -438,7 +440,8 @@ int duration = 640;
         }
 
         /* Do the grab */
-        grab_frame();
+        if (grab)
+            grab_frame();
 
         int x1 = 3 * width/4;
         int y1 = 3 * height/4;
@@ -448,15 +451,29 @@ int duration = 640;
         for (y = 0; y < height; y++) {
             for (x=0; x < width; x++) {
                  // Cheesy picture-in-picture
-                if (show_hud && x > x1 && y > y1) {
+                if (hud && x > x1 && y > y1) {
                     index = ((y - y1) * 4 * width) + (x - x1) * 4 + (ring_index * frame_size);
                 }
                 else {
-                    //index = index_of(x, y, ring_index - x) % tc_size; // horizontal slitscan
-                    //index = index_of(x, y, ring_index - (x/10 + y/10)) % tc_size; // diagonal slitscan
-                    index = index_of(x, y, ring_index - y) % tc_size; // vertical slitscan
-                    //index = index_of(ring_index, y, x) % tc_size; // lardus effect
-                    // index = index_of(x, y, ring_index); // identity
+                    switch(mode % 6) {
+                    case 0: 
+                        index = index_of(x, y, ring_index - x) % tc_size; // horizontal slitscan
+                        break;
+                    case 1:
+                        index = index_of(x, y, ring_index - (x/10 + y/10)) % tc_size; // diagonal slitscan
+                        break;
+                    case 2:
+                        index = index_of(x, y, ring_index - y) % tc_size; // vertical slitscan
+                        break;
+                    case 3:
+                        index = index_of(ring_index, y, x) % tc_size; // lardus effect
+                        break;
+                    case 4:
+                        index = index_of(x, ring_index, y) % tc_size; // vertical lardus
+                        break;
+                    default:
+                        index = index_of(x, y, ring_index); // identity
+                    }
                 }
                 if (index < 0) {
                     index += tc_size;
@@ -477,10 +494,14 @@ int duration = 640;
             if (event.type == KeyPress) {
                 XKeyEvent *kev = (XKeyEvent *) &event;
                 unsigned int keycode = kev->keycode;
-                if (keycode == 9)
+                if (keycode == 9) // escape
                     return;
-                if (keycode == 43)
-                    show_hud = !show_hud;
+                if (keycode == 43) // h key
+                    hud = !hud;
+                if (keycode == 42) // g gkey
+                    grab = !grab;
+                if (keycode == 58) // M key
+                    mode++;
             }
         }
     }
