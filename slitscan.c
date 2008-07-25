@@ -36,13 +36,14 @@ extern XvImage  *XvShmCreateImage(Display*, XvPortID, int, char*, int, int, XShm
 
 #define CLEAR(x) memset (&(x), 0, sizeof (x))
 
-#define XV_IMAGE_FORMAT 0x32595559
+#define XV_IMAGE_FORMAT 0x3
 
 
 int width = 640;
 int height = 480;
 char *video_dev = "/dev/video0";
 
+int show_hud = 1;
 
 struct buffer {
         void *                  start;
@@ -60,6 +61,11 @@ Window   window;
 GC       gc;
 int      xv_port = -1;
 XShmSegmentInfo shminfo;
+
+int32_t *timecube;
+int ring_index = 0;
+int frame_size;
+int tc_size;
 
 void fatal(const char *format, ...)
 {
@@ -138,12 +144,13 @@ int create_window() {
     int ret = XvQueryAdaptors(dpy, DefaultRootWindow(dpy), &p_num_adaptors, &ai);
     if (ret != Success)
         fatal("Query adaptors failed");
-    xv_port = ai[0].base_id;
+    xv_port = 387; //ai[0].base_id; // FIXME: HACK
     printf("xv_port: %d\n", xv_port);
 
     gc = XCreateGC(dpy, window, 0, 0);
 
     image = XvShmCreateImage(dpy, xv_port, XV_IMAGE_FORMAT, 0, width, height, &shminfo);
+
     shminfo.shmid = shmget(IPC_PRIVATE, image->data_size, IPC_CREAT | 0777);
     shminfo.shmaddr = image->data = shmat(shminfo.shmid, 0, 0);
     shminfo.readOnly = False;
@@ -151,10 +158,12 @@ int create_window() {
     if (!XShmAttach(dpy, &shminfo))
         fatal("XShmAttach failed !\n");
 
+    printf("Attempting to write to SHM\n");
+
     XvShmPutImage(dpy, xv_port, window, gc, image,
         0, 0, image->width, image->height,
         0, 0, width, height, True);
-
+    printf("Successfully initialized video\n");
     return 0;
 }
 
@@ -287,7 +296,7 @@ void start_capture() {
 
         if (-1 == xioctl (fd, VIDIOC_QBUF, &buf))
             fatal("VIDIOC_QBUF");
-        }
+    }
 
     type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 	if (-1 == xioctl (fd, VIDIOC_STREAMON, &type))
@@ -295,7 +304,64 @@ void start_capture() {
 
 }
 
-void grab_frame() {
+void save_frame_bw(int buf_index) {
+    int col,row;
+    int y;
+    // Save frame to timecube slot
+    for (row = 0; row < height; row++) {
+        for (col = 0; col < width; col++) {
+            y = (((unsigned short *)buffers[buf_index].start)[width * row + (width - col)]) & 0xff;
+            timecube[(ring_index * frame_size) + (row * width) + col] =
+                (y << 16) + (y << 8) + y;
+
+        }
+    }
+}
+
+void save_frame_color(int buf_index) {
+{
+
+	unsigned char* start = buffers[buf_index].start;
+	/* FIXME: Optimize please */
+    int r, g, b;
+    int y, u, v;
+    int c, d, e;
+
+    int rgbp;
+
+    for (rgbp = 0; rgbp < height * width; rgbp ++) {
+        if (rgbp % 2 == 0) {
+            y = start[rgbp * 2 + 0];
+            u = start[rgbp * 2 + 1];
+            v = start[rgbp * 2 + 3];
+        }
+        else {
+            y = start[(rgbp - 1) * 2 + 2];
+            u = start[(rgbp - 1) * 2 + 1];
+            v = start[(rgbp - 1) * 2 + 3];
+        }
+
+        c = y - 16;
+        d = u - 128;
+        e = v - 128;
+
+        r = ((298 * c + 409 * e + 128) >> 8);
+        if (r < 0) r = 0;
+        if (r > 0xff) r = 0xff;
+        g = ((298 * c - 100 * d - 208 * e + 128) >> 8);
+        if (g < 0) g = 0;
+        if (g > 0xff) g = 0xff;
+        b = ((298 * c + 516 * d + 128) >> 8);
+        if (b < 0) b = 0;
+        if (b > 0xff) b = 0xff;
+        timecube[(ring_index * frame_size) + rgbp] = (r << 16) + (g << 8) + b;
+    }
+}
+
+
+}
+
+int grab_frame() {
     struct v4l2_buffer buf;
 
     CLEAR (buf);
@@ -305,7 +371,7 @@ void grab_frame() {
     if (-1 == xioctl (fd, VIDIOC_DQBUF, &buf)) {
         switch (errno) {
             case EAGAIN:
-                return;
+                return -1;
 			case EIO:
 			default:
 				fatal("VIDIOC_DQBUF");
@@ -313,25 +379,18 @@ void grab_frame() {
 	}
 
     if (buf.index >= n_buffers)
-        fatal("buffer index");
+        fatal("Invalid buffer index");
 
-    //process_frame
-    //
+    save_frame_color(buf.index);
 
-    int i, j;
-    for (i = 0; i < image->height * 2; i++) {
-        for (j = 0; j < image->width; j++) {
-            image->data[image->width*i + j] = ((char *)buffers[buf.index].start)[width * i + j];
-        }
-    }
-
+    //printf("Enqueuing buffer %d\n", buf.index);
 	if (-1 == xioctl (fd, VIDIOC_QBUF, &buf))
 	    fatal("VIDIOC_QBUF");
 
-    return;
+    return 0;
 }
 
-void push_frame(int foo) {
+void push_frame() {
     printf(".\n");
     Window _dw;
     int _d, _w, _h;
@@ -340,8 +399,9 @@ void push_frame(int foo) {
     XvShmPutImage(dpy, xv_port, window, gc, image,
         0, 0, image->width, image->height,
 		0, 0, _w, _h, True);
-
 }
+
+#define index_of(x,y,t) (((t) * frame_size) + ((y) * width) + x)
 
 
 void main_loop() {
@@ -350,12 +410,78 @@ void main_loop() {
     debug("*** PRESS ANY KEY TO EXIT ***\n");
     int buf_index;
 
+int duration = 640;
+
+    frame_size = width * height;
+    tc_size = frame_size * duration;
+    int x, y;
+    fd_set fds;
+    struct timeval tv;
+    int r;
+
+    timecube = malloc(tc_size * 4);
+
     while (1) {
+        /* Wait for new frame to become available */
+        FD_ZERO(&fds);
+        FD_SET(fd, &fds);
+        tv.tv_sec  = 1;
+        tv.tv_usec = 0;
+        r = select(fd + 1, &fds, NULL, NULL, &tv);
+        if (-1 == r) {
+            if (EINTR == errno)
+                continue;
+            fatal("Select");
+        }
+        if (0 == r) {
+            printf("Select timeout\n");
+        }
+
+        /* Do the grab */
         grab_frame();
-        push_frame(buf_index);
-        XNextEvent(dpy, &event);
-        if (event.type == KeyPress) {
-            break;
+
+        int x1 = 3 * width/4;
+        int y1 = 3 * height/4;
+
+        /* Create image from timecube */
+        int index;
+        for (y = 0; y < height; y++) {
+            for (x=0; x < width; x++) {
+                 // Cheesy picture-in-picture
+                if (show_hud && x > x1 && y > y1) {
+                    index = ((y - y1) * 4 * width) + (x - x1) * 4 + (ring_index * frame_size);
+                }
+                else {
+                    //index = index_of(x, y, ring_index - x) % tc_size; // horizontal slitscan
+                    //index = index_of(x, y, ring_index - (x/10 + y/10)) % tc_size; // diagonal slitscan
+                    index = index_of(x, y, ring_index - y) % tc_size; // vertical slitscan
+                    //index = index_of(ring_index, y, x) % tc_size; // lardus effect
+                    // index = index_of(x, y, ring_index); // identity
+                }
+                if (index < 0) {
+                    index += tc_size;
+                }
+                *((int32_t *) ((char *) image->data + ((width * y * 4) + x * 4))) = timecube[index];
+            }
+        }
+
+        /* Push it out to Xv */
+        push_frame();
+
+        if (++ring_index == duration)
+            ring_index = 0;
+
+        /* Check for keypress */
+        while (XPending(dpy)) {
+            XNextEvent(dpy, &event);
+            if (event.type == KeyPress) {
+                XKeyEvent *kev = (XKeyEvent *) &event;
+                unsigned int keycode = kev->keycode;
+                if (keycode == 9)
+                    return;
+                if (keycode == 43)
+                    show_hud = !show_hud;
+            }
         }
     }
 }
