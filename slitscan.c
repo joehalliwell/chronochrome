@@ -1,6 +1,12 @@
 /*
  * gcc -o slitscan slitscan.c  -L/usr/X11R6/lib -lX11 -lXext -lXv
- *
+ * TODO:
+ * - Pick up XV port correctly
+ * - FPS monitoring
+ * - Add fullscreen mode
+ * - Break into separate files (main, xv, camera)
+ * - Add frame dumping (BMP?)
+ * - Add watermarking
  */
 
 #include <stdlib.h>
@@ -81,6 +87,17 @@ void debug(const char *format, ...)
     va_start(ap, format);
     printf(format, ap);
     va_end(ap);
+}
+
+static unsigned char *put_
+
+void write_bmp(char *filename)
+{
+    char h[54];
+    *h++ = 'B';
+    *h++ = 'M';
+    
+
 }
 
 int create_window() {
@@ -214,6 +231,9 @@ void init_camera() {
     if (!(cap.capabilities & V4L2_CAP_STREAMING))
         fatal("%s does not support streaming i/o\n", video_dev);
 
+    if (cap.capabilities & V4L2_CAP_TIMEPERFRAME)
+        printf("Can set time per frame.\n");
+
     /* Select video input, video standard and tune here. */
 
     CLEAR (fmt);
@@ -270,7 +290,7 @@ void init_camera() {
         if (-1 == xioctl (fd, VIDIOC_QUERYBUF, &buf))
             fatal("VIDIOC_QUERYBUF");
 
-            buffers[n_buffers].length = buf.length;
+        buffers[n_buffers].length = buf.length;
         buffers[n_buffers].start =
         mmap (NULL /* start anywhere */,
             buf.length,
@@ -319,7 +339,6 @@ void save_frame_bw(int buf_index) {
 
 void save_frame_color(int buf_index) {
 {
-
 	unsigned char* start = buffers[buf_index].start;
 	/* FIXME: Optimize please */
     int r, g, b;
@@ -463,7 +482,7 @@ int duration = 640;
                         index = index_of(x, y, ring_index - (x/10 + y/10)) % tc_size; // diagonal slitscan
                         break;
                     case 2:
-                        index = index_of(x, y, ring_index - y) % tc_size; // vertical slitscan
+                        index = index_of(x, y, ring_index - y/10) % tc_size; // vertical slitscan
                         break;
                     case 3:
                         index = index_of(ring_index, y, x) % tc_size; // lardus effect
@@ -485,9 +504,11 @@ int duration = 640;
         /* Push it out to Xv */
         push_frame();
 
-        if (++ring_index == duration)
-            ring_index = 0;
-
+        if (grab) {
+            ring_index++;
+            if (ring_index == duration)
+                ring_index = 0;
+        }
         /* Check for keypress */
         while (XPending(dpy)) {
             XNextEvent(dpy, &event);
