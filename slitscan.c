@@ -44,6 +44,12 @@ extern XvImage  *XvShmCreateImage(Display*, XvPortID, int, char*, int, int, XShm
 
 #define XV_IMAGE_FORMAT 0x3
 
+// FOURCCs I HAVE KNOWN AND LOVED
+// RGB  0x3
+// YUY2 0x32595559 Packed
+// YV12 0x32315659
+// I420 0x30323449
+// UYVY 0x59565955 Packed
 
 int width = 640;
 int height = 480;
@@ -89,16 +95,6 @@ void debug(const char *format, ...)
     va_end(ap);
 }
 
-static unsigned char *put_
-
-void write_bmp(char *filename)
-{
-    char h[54];
-    *h++ = 'B';
-    *h++ = 'M';
-    
-
-}
 
 int create_window() {
     dpy = XOpenDisplay(NULL);
@@ -161,6 +157,7 @@ int create_window() {
     if (ret != Success)
         fatal("Query adaptors failed");
     xv_port = 387; //ai[0].base_id; // FIXME: HACK
+    xv_port = ai[0].base_id;
     printf("xv_port: %d\n", xv_port);
 
     gc = XCreateGC(dpy, window, 0, 0);
