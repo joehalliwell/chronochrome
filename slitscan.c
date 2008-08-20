@@ -95,6 +95,37 @@ void debug(const char *format, ...)
     va_end(ap);
 }
 
+enum
+{
+  _NET_WM_STATE_REMOVE =0,
+  _NET_WM_STATE_ADD = 1,
+  _NET_WM_STATE_TOGGLE =2
+
+};
+
+void toggle_fullscreen() {
+    static int fullscreen;
+    fullscreen = !fullscreen;
+    printf("Going to %s", fullscreen?"fullscreen":"windowed");
+    // FIXME: Do this in init?
+    Atom wm_state = XInternAtom(dpy, "_NET_WM_STATE", False);
+    Atom fs_state = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
+
+    XEvent xev;
+    xev.xclient.type=ClientMessage;
+    xev.xclient.serial = 0;
+    xev.xclient.send_event=True;
+    xev.xclient.window=window;
+    xev.xclient.message_type=wm_state;
+    xev.xclient.format=32;
+    xev.xclient.data.l[0] = (fullscreen ? _NET_WM_STATE_ADD : _NET_WM_STATE_REMOVE);
+    xev.xclient.data.l[1] = fs_state;
+    xev.xclient.data.l[2] = 0;
+    XSendEvent(dpy, DefaultRootWindow(dpy), False,
+        SubstructureRedirectMask | SubstructureNotifyMask,
+        &xev);
+}
+
 
 int create_window() {
     dpy = XOpenDisplay(NULL);
@@ -157,7 +188,7 @@ int create_window() {
     if (ret != Success)
         fatal("Query adaptors failed");
     xv_port = 387; //ai[0].base_id; // FIXME: HACK
-    xv_port = ai[0].base_id;
+    //xv_port = ai[0].base_id;
     printf("xv_port: %d\n", xv_port);
 
     gc = XCreateGC(dpy, window, 0, 0);
@@ -520,6 +551,8 @@ int duration = 640;
                     grab = !grab;
                 if (keycode == 58) // M key
                     mode++;
+                if (keycode == 41) // f key
+                    toggle_fullscreen();
             }
         }
     }
