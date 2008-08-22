@@ -3,7 +3,6 @@
  * TODO:
  * - Pick up XV port correctly
  * - FPS monitoring
- * - Add fullscreen mode
  * - Break into separate files (main, xv, camera)
  * - Add frame dumping (BMP?)
  * - Add watermarking
@@ -166,7 +165,7 @@ int create_window() {
 			 vinfo.visual,
 			 mask, &xswa);
 
-    XStoreName(dpy, window, "Slitscan demo");
+    XStoreName(dpy, window, "C H R O N O C H R O M E");
     XSetIconName(dpy, window, "Slitscan demo");
 
     XSelectInput(dpy, window, StructureNotifyMask | KeyPressMask);
@@ -187,6 +186,7 @@ int create_window() {
     int ret = XvQueryAdaptors(dpy, DefaultRootWindow(dpy), &p_num_adaptors, &ai);
     if (ret != Success)
         fatal("Query adaptors failed");
+    // FIXME: Pick out an RGB-capable visual?
     xv_port = 387; //ai[0].base_id; // FIXME: HACK
     //xv_port = ai[0].base_id;
     printf("xv_port: %d\n", xv_port);
