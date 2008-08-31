@@ -1,5 +1,5 @@
 /*
- * gcc -o slitscan slitscan.c  -L/usr/X11R6/lib -lX11 -lXext -lXv
+ * gcc -o slitscan slitscan.c  -L/usr/X11R6/lib -lX11 -lXext -lXv -lfreeimage -O3
  * TODO:
  * - Pick up XV port correctly
  * - FPS monitoring
@@ -36,6 +36,8 @@
 #include <asm/types.h>          /* for videodev2.h */
 
 #include <linux/videodev2.h>
+
+#include <FreeImage.h>
 
 extern XvImage  *XvShmCreateImage(Display*, XvPortID, int, char*, int, int, XShmSegmentInfo*);
 
@@ -444,7 +446,7 @@ void print_help() {
     printf("Commands:\n%s", help_text);
 }
 
-#define index_of(x,y,t) ((((t) % NUM_FRAMES) * FRAME_SIZE) + ((y) * (WIDTH) * BPP) + (x) * BPP)
+#define index_of(x,y,t) ((((t) % NUM_FRAMES) * FRAME_SIZE) + ((y) * (WIDTH) * BPP) + (WIDTH-x) * BPP)
 
 
 void main_loop() {
@@ -460,9 +462,23 @@ void main_loop() {
     int pause = 0;
     int delta = 1;
     int time = ring_index;
-    time = 1590;
+
+    /* Clear buffer to UYVY black */
     for (x = 0; x<TC_SIZE; x+=4) {
         *((int *) ((char *) (timecube + x))) = 0x80008000; //Black
+    }
+
+    /* Prepare the logo */
+    FIBITMAP *logo = FreeImage_Load(FIF_BMP, "logo.bmp", BMP_DEFAULT);
+    int w = FreeImage_GetWidth(logo);
+    int h = FreeImage_GetHeight(logo);
+    unsigned char *logo_mask = malloc(w*h);
+    RGBQUAD value;
+    for (y = 0; y < h; y++) {
+        for (x = 0; x<w; x++) {
+            FreeImage_GetPixelColor(logo, x, y, &value);
+            logo_mask[(h-1-y)*w + x] = value.rgbRed & 0xff;
+        }
     }
 
     while (1) {
@@ -544,6 +560,16 @@ void main_loop() {
                 }
             }
         }
+
+        /* Composite logo */
+        for (y = 0; y<h; y++) {
+            for (x = 0; x<w; x++) {
+                r =  *(((unsigned char *) image -> data + ((WIDTH * (y + 5) * BPP) + (WIDTH - 5 - w + x) * BPP + 1)));
+                r += logo_mask[y * w + x]/2;
+                *(((unsigned char *) image -> data + ((WIDTH * (y + 5) * BPP) + (WIDTH - 5 - w + x) * BPP + 1))) = r>0xff?0xff:r;
+            }
+        }
+
         /* Push it out to Xv */
         push_frame();
 
