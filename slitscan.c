@@ -49,11 +49,14 @@ extern XvImage  *XvShmCreateImage(Display*, XvPortID, int, char*, int, int, XShm
 // YUY2 0x32595559 Packed
 // YV12 0x32315659
 // I420 0x30323449
-// UYVY 0x59565955 Packed (YVYU)
+// UYVY 0x59565955 Packed (YVYU, surely?)
 
+// 320x240
+// 640x480
+// 960x720
 #define WIDTH 640
 #define HEIGHT 480
-#define NUM_FRAMES 640
+#define NUM_FRAMES ((WIDTH<HEIGHT)?HEIGHT:WIDTH)
 #define BPP 2
 #define FRAME_SIZE ((WIDTH * HEIGHT * BPP))
 #define TC_SIZE (FRAME_SIZE * NUM_FRAMES)
@@ -137,7 +140,8 @@ int get_xv_port() {
     XvAdaptorInfo		*ai;
     XvImageFormatValues *ifv;
 
-    int num_adaptors, num_formats;
+    unsigned int num_adaptors;
+    int num_formats;
     int i, p, j;
     int ret;
 
@@ -155,7 +159,7 @@ int get_xv_port() {
                     break;
                 }
             }
-            Xfree(ifv);
+            XFree(ifv);
         }
     }
     XvFreeAdaptorInfo(ai);
@@ -178,14 +182,6 @@ int create_window() {
     if (!XMatchVisualInfo(dpy, screen, 24, TrueColor, &vinfo)) {
         fatal("Could not get 24-bit display.\n");
     }
-
-    XSizeHints hint = {
-        .x = 1,
-        .y = 1,
-        .width = WIDTH,
-        .height = HEIGHT,
-        .flags = PPosition | PSize
-    };
 
     XSetWindowAttributes xswa = {
         .colormap =  XCreateColormap(dpy, DefaultRootWindow(dpy), vinfo.visual, AllocNone),
@@ -274,8 +270,6 @@ void close_device() {
 
 void init_camera() {
     struct v4l2_capability cap;
-    struct v4l2_cropcap cropcap;
-    struct v4l2_crop crop;
     struct v4l2_format fmt;
 	unsigned int min;
 
@@ -308,6 +302,10 @@ void init_camera() {
         fatal("VIDIOC_S_FMT");
 
     /* Note VIDIOC_S_FMT may change width and height. */
+    if (fmt.fmt.pix.width != WIDTH)
+        fatal("Unexpected width %d", fmt.fmt.pix.width);
+    if (fmt.fmt.pix.height != HEIGHT)
+        fatal("Unexpected height %d", fmt.fmt.pix.height);
 
 	/* Buggy driver paranoia. */
 	min = fmt.fmt.pix.width * 2;
@@ -385,7 +383,6 @@ void start_capture() {
 
 void save_frame_color(int buf_index) {
 {
-	unsigned char* start = buffers[buf_index].start;
     ring_index++;
     if (ring_index >= NUM_FRAMES) {
         ring_index = 0;
@@ -426,13 +423,15 @@ int grab_frame() {
 }
 
 void push_frame() {
-    Window _dw;
-    int _d, _w, _h;
-    XGetGeometry(dpy, window, &_dw, &_d, &_d, &_w, &_h, &_d, &_d);
+    Window _win;
+    int _i;
+    unsigned int _ui;
+    unsigned int w, h;
+    XGetGeometry(dpy, window, &_win, &_i, &_i, &w, &h, &_ui, &_ui);
 
     XvShmPutImage(dpy, xv_port, window, gc, image,
         0, 0, image->width, image->height,
-		0, 0, _w, _h, True);
+		0, 0, w, h, True);
 }
 
 void print_help() {
@@ -445,13 +444,11 @@ void print_help() {
     printf("Commands:\n%s", help_text);
 }
 
-#define index_of(x,y,t) (((t) * FRAME_SIZE) + ((y) * (WIDTH) * BPP) + (x) * BPP)
+#define index_of(x,y,t) ((((t) % NUM_FRAMES) * FRAME_SIZE) + ((y) * (WIDTH) * BPP) + (x) * BPP)
 
 
 void main_loop() {
     XEvent event;
-
-    int buf_index;
 
     int x, y;
     fd_set fds;
@@ -463,11 +460,7 @@ void main_loop() {
     int pause = 0;
     int delta = 1;
     int time = ring_index;
-
-    timecube = malloc(TC_SIZE);
-    if (timecube == NULL)
-        fatal("Could not allocate memory for timecube");
-
+    time = 1590;
     for (x = 0; x<TC_SIZE; x+=4) {
         *((int *) ((char *) (timecube + x))) = 0x80008000; //Black
     }
@@ -485,7 +478,8 @@ void main_loop() {
             fatal("Select failed");
         }
         if (0 == r) {
-            printf("Select timeout\n");
+            debug("Select timeout\n");
+            continue;
         }
 
         /* Do the grab */
@@ -496,8 +490,11 @@ void main_loop() {
         int y1 = 3 * HEIGHT/4;
 
         if (!pause) {
-            time+=delta;
+            time += delta;
         }
+
+        int xb_time = (time%(2*WIDTH - 2))<WIDTH?(time%(2*WIDTH - 2)):2*WIDTH - 2 - (time%(2*WIDTH - 2));
+        //debug("%d - %d", time, xb_time);
 
         /* Create image from timecube */
         int index;
@@ -508,8 +505,8 @@ void main_loop() {
                     index = ((y - y1) * 4 * BPP * WIDTH) + (x - x1) * 4 *  BPP + (ring_index * FRAME_SIZE);
                 }
                 else {
-                    switch(mode % 6) {
-                    case 1: 
+                    switch(mode) {
+                    case 1:
                         index = index_of(x, y, time - x); // horizontal slitscan
                         break;
                     case 2:
@@ -519,7 +516,7 @@ void main_loop() {
                         index = index_of(x, y, time - y/10); // vertical slitscan
                         break;
                     case 4:
-                        index = index_of((time % (2 * WIDTH - 1)) < WIDTH ? time: 2 * WIDTH - 2 - time, y, ring_index + 1 + x); // lardus effect
+                        index = index_of(xb_time, y, ring_index + 1 + x); // lardus effect
                         break;
                     case 5:
                         index = index_of(x, time, ring_index + 1 + y); // vertical lardus
@@ -527,22 +524,23 @@ void main_loop() {
                     case 0:
                     default:
                         index = index_of(x, y, time); // identity
+                        break;
                     }
                 }
-                while (index < 0) {
-                    index += TC_SIZE;
+                if (index < 0) {
+                    index = (index % TC_SIZE) + TC_SIZE;
                 }
 
                 /* In packed formats, there are two types of pixel U and V -- so source and dest either match or don't...*/
                 /* Also XV and V4L modes have different byte orders within the macro pixel */
 
                 if ((x % 2) == ((index/2) % 2)) {
-                    *(((char *)  image->data + ((WIDTH * y * BPP) + x * BPP ))) = timecube[(index + 1) % TC_SIZE];
+                    *(((char *) image->data + ((WIDTH * y * BPP) + x * BPP ))) = timecube[(index + 1) % TC_SIZE];
                     *(((char *) image->data + ((WIDTH * y * BPP) + x * BPP + 1))) = timecube[index % TC_SIZE];
                 }
                 else {
                     *(((char *) image->data + ((WIDTH * y * BPP) + x * BPP ))) = timecube[(index + 3) % TC_SIZE];
-                    *(((char *)  image->data + ((WIDTH * y * BPP) + x * BPP + 1))) = timecube[index % TC_SIZE];
+                    *(((char *) image->data + ((WIDTH * y * BPP) + x * BPP + 1))) = timecube[index % TC_SIZE];
                 }
             }
         }
@@ -560,10 +558,12 @@ void main_loop() {
                 /* escape */
                 case 24:
                 case 9:
+                    debug("Bye!");
                     return;
                 /* p */
                 case 33:
                     pause = ! pause;
+                    debug("Animation timer %s", pause?"paused":"running");
                     if (!pause) {
                         time = ring_index;
                     }
@@ -571,16 +571,19 @@ void main_loop() {
                 /* h */
                 case 43:
                     hud = ! hud;
+                    debug("HUD %s", hud?"enabled":"disabled");
                     break;
                 /* g */
                 case 42:
                     grab = ! grab;
+                    debug("Grab %s", grab?"enabled":"disabled");
                     if (grab)
                         time = ring_index;
                     break;
                 /* m */
                 case 58:
-                    mode++;
+                    mode = (mode + 1) % 6;
+                    debug("Switching to mode %d", mode);
                     break;
                 /* f */
                 case 41:
@@ -588,9 +591,15 @@ void main_loop() {
                     break;
                 case 21:
                     delta++;
+                    debug("Delta %d", delta);
                     break;
                 case 20:
                     delta--;
+                    debug("Delta %d", delta);
+                    break;
+                /* i */
+                case 31:
+                    debug("Time: %d, Index: %d", time, ring_index);
                     break;
                 default:
                     debug("Invalid keypress %d", keycode);
@@ -626,7 +635,11 @@ int main(int argc, char* argv[]) {
     start_capture();
     // allocate buffers? prepare map?
     print_help();
+    timecube = malloc(TC_SIZE);
+    if (timecube == NULL)
+        fatal("Could not allocate memory for timecube");
     main_loop();
+    free(timecube);
     stop_capture();
     destroy_window();
     shutdown_camera();
