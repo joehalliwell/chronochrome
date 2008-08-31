@@ -41,19 +41,28 @@ extern XvImage  *XvShmCreateImage(Display*, XvPortID, int, char*, int, int, XShm
 
 #define CLEAR(x) memset (&(x), 0, sizeof (x))
 
-#define XV_IMAGE_FORMAT 0x3
+//#define XV_IMAGE_FORMAT 0x3
+#define XV_IMAGE_FORMAT 0x59565955 
 
 // FOURCCs I HAVE KNOWN AND LOVED
 // RGB  0x3
 // YUY2 0x32595559 Packed
 // YV12 0x32315659
 // I420 0x30323449
-// UYVY 0x59565955 Packed
+// UYVY 0x59565955 Packed (YVYU)
 
-int width = 640;
-int height = 480;
+#define WIDTH 640
+#define HEIGHT 480
+#define NUM_FRAMES 640
+#define BPP 2
+#define FRAME_SIZE ((WIDTH * HEIGHT * BPP))
+#define TC_SIZE (FRAME_SIZE * NUM_FRAMES)
+
+unsigned char *timecube;
+int ring_index = -1;
+
 char *video_dev = "/dev/video0";
-
+int xv_port = -1;
 
 struct buffer {
         void *                  start;
@@ -69,19 +78,16 @@ Display *dpy;
 XvImage *image;
 Window   window;
 GC       gc;
-int      xv_port = -1;
 XShmSegmentInfo shminfo;
 
-int32_t *timecube;
-int ring_index = 0;
-int frame_size;
-int tc_size;
 
 void fatal(const char *format, ...)
 {
     va_list ap;
     va_start(ap, format);
-    printf(format, ap);
+    printf("\n\nFatal error: ");
+    vprintf(format, ap);
+    printf("\n");
     va_end(ap);
     exit(-1);
 }
@@ -90,8 +96,9 @@ void debug(const char *format, ...)
 {
     va_list ap;
     va_start(ap, format);
-    printf(format, ap);
+    vprintf(format, ap);
     va_end(ap);
+    printf("\n");
 }
 
 enum
@@ -103,9 +110,9 @@ enum
 };
 
 void toggle_fullscreen() {
-    static int fullscreen;
+    static int fullscreen = 0;
     fullscreen = !fullscreen;
-    printf("Going to %s", fullscreen?"fullscreen":"windowed");
+    debug("Switching to %s mode", fullscreen?"fullscreen":"windowed");
     // FIXME: Do this in init?
     Atom wm_state = XInternAtom(dpy, "_NET_WM_STATE", False);
     Atom fs_state = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
@@ -125,11 +132,44 @@ void toggle_fullscreen() {
         &xev);
 }
 
+int get_xv_port() {
+
+    XvAdaptorInfo		*ai;
+    XvImageFormatValues *ifv;
+
+    int num_adaptors, num_formats;
+    int i, p, j;
+    int ret;
+
+    ret = XvQueryAdaptors(dpy, DefaultRootWindow(dpy), &num_adaptors, &ai);
+    if (ret != Success)
+        fatal("Query adaptors failed");
+
+    debug("Found %d adaptors.", num_adaptors);
+    for (i = 0; i < num_adaptors && xv_port == -1 ; i++) {
+        for (p = ai[i].base_id; p < ai[i].base_id + ai[i].num_ports && xv_port == -1; p++) {
+            ifv = XvListImageFormats(dpy, p, &num_formats);
+            for (j = 0; j < num_formats; j++) {
+                if (ifv[j].id == XV_IMAGE_FORMAT) {
+                    xv_port = p;
+                    break;
+                }
+            }
+            Xfree(ifv);
+        }
+    }
+    XvFreeAdaptorInfo(ai);
+    if (xv_port == -1)
+        fatal("Could not locate suitable Xv port.");
+    else
+        debug("Using Xv port at %d.", xv_port);
+    return xv_port;
+}
 
 int create_window() {
     dpy = XOpenDisplay(NULL);
     if (dpy == NULL) {
-        fatal("Cannot open Display.\n");
+        fatal("Cannot open Display.");
     }
 
     int screen = DefaultScreen(dpy);
@@ -142,8 +182,8 @@ int create_window() {
     XSizeHints hint = {
         .x = 1,
         .y = 1,
-        .width = width,
-        .height = height,
+        .width = WIDTH,
+        .height = HEIGHT,
         .flags = PPosition | PSize
     };
 
@@ -158,8 +198,8 @@ int create_window() {
 
     window = XCreateWindow(dpy, DefaultRootWindow(dpy),
 			 0, 0,
-			 width,
-			 height,
+			 WIDTH,
+			 HEIGHT,
 			 0, vinfo.depth,
 			 InputOutput,
 			 vinfo.visual,
@@ -181,19 +221,11 @@ int create_window() {
     }
     while (event.type != MapNotify || event.xmap.event != window);
 
-    XvAdaptorInfo		*ai;
-    int p_num_adaptors;
-    int ret = XvQueryAdaptors(dpy, DefaultRootWindow(dpy), &p_num_adaptors, &ai);
-    if (ret != Success)
-        fatal("Query adaptors failed");
-    // FIXME: Pick out an RGB-capable visual?
-    xv_port = 387; //ai[0].base_id; // FIXME: HACK
-    //xv_port = ai[0].base_id;
-    printf("xv_port: %d\n", xv_port);
+    int xv_port = get_xv_port();
 
     gc = XCreateGC(dpy, window, 0, 0);
 
-    image = XvShmCreateImage(dpy, xv_port, XV_IMAGE_FORMAT, 0, width, height, &shminfo);
+    image = XvShmCreateImage(dpy, xv_port, XV_IMAGE_FORMAT, 0, WIDTH, HEIGHT, &shminfo);
 
     shminfo.shmid = shmget(IPC_PRIVATE, image->data_size, IPC_CREAT | 0777);
     shminfo.shmaddr = image->data = shmat(shminfo.shmid, 0, 0);
@@ -206,7 +238,7 @@ int create_window() {
 
     XvShmPutImage(dpy, xv_port, window, gc, image,
         0, 0, image->width, image->height,
-        0, 0, width, height, True);
+        0, 0, WIDTH, HEIGHT, True);
     printf("Successfully initialized video\n");
     return 0;
 }
@@ -267,8 +299,8 @@ void init_camera() {
     CLEAR (fmt);
 
     fmt.type                = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    fmt.fmt.pix.width       = width;
-    fmt.fmt.pix.height      = height;
+    fmt.fmt.pix.width       = WIDTH;
+    fmt.fmt.pix.height      = HEIGHT;
     fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
     fmt.fmt.pix.field       = V4L2_FIELD_INTERLACED;
 
@@ -351,59 +383,16 @@ void start_capture() {
 
 }
 
-void save_frame_bw(int buf_index) {
-    int col,row;
-    int y;
-    // Save frame to timecube slot
-    for (row = 0; row < height; row++) {
-        for (col = 0; col < width; col++) {
-            y = (((unsigned short *)buffers[buf_index].start)[width * row + (width - col)]) & 0xff;
-            timecube[(ring_index * frame_size) + (row * width) + col] =
-                (y << 16) + (y << 8) + y;
-
-        }
-    }
-}
-
 void save_frame_color(int buf_index) {
 {
 	unsigned char* start = buffers[buf_index].start;
-	/* FIXME: Optimize please */
-    int r, g, b;
-    int y, u, v;
-    int c, d, e;
-
-    int rgbp;
-
-    for (rgbp = 0; rgbp < height * width; rgbp ++) {
-        if (rgbp % 2 == 0) {
-            y = start[rgbp * 2 + 0];
-            u = start[rgbp * 2 + 1];
-            v = start[rgbp * 2 + 3];
-        }
-        else {
-            y = start[(rgbp - 1) * 2 + 2];
-            u = start[(rgbp - 1) * 2 + 1];
-            v = start[(rgbp - 1) * 2 + 3];
-        }
-
-        c = y - 16;
-        d = u - 128;
-        e = v - 128;
-
-        r = ((298 * c + 409 * e + 128) >> 8);
-        if (r < 0) r = 0;
-        if (r > 0xff) r = 0xff;
-        g = ((298 * c - 100 * d - 208 * e + 128) >> 8);
-        if (g < 0) g = 0;
-        if (g > 0xff) g = 0xff;
-        b = ((298 * c + 516 * d + 128) >> 8);
-        if (b < 0) b = 0;
-        if (b > 0xff) b = 0xff;
-        timecube[(ring_index * frame_size) + rgbp] = (r << 16) + (g << 8) + b;
+    ring_index++;
+    if (ring_index >= NUM_FRAMES) {
+        ring_index = 0;
     }
+    memcpy(timecube + (ring_index * FRAME_SIZE), buffers[buf_index].start, FRAME_SIZE);
+    return;
 }
-
 
 }
 
@@ -437,7 +426,6 @@ int grab_frame() {
 }
 
 void push_frame() {
-    printf(".\n");
     Window _dw;
     int _d, _w, _h;
     XGetGeometry(dpy, window, &_dw, &_d, &_d, &_w, &_h, &_d, &_d);
@@ -447,28 +435,42 @@ void push_frame() {
 		0, 0, _w, _h, True);
 }
 
-#define index_of(x,y,t) (((t) * frame_size) + ((y) * width) + x)
+void print_help() {
+    char *help_text = \
+        "  q - Exit\n"
+        "  f - Toggle fullscreen\n"
+        "  g - Toggle framegrab\n"
+        "  h - Toggle HUD\n"
+        "  m - Switch mode\n";
+    printf("Commands:\n%s", help_text);
+}
+
+#define index_of(x,y,t) (((t) * FRAME_SIZE) + ((y) * (WIDTH) * BPP) + (x) * BPP)
 
 
 void main_loop() {
     XEvent event;
 
-    debug("*** PRESS ANY KEY TO EXIT ***\n");
     int buf_index;
 
-int duration = 640;
-
-    frame_size = width * height;
-    tc_size = frame_size * duration;
     int x, y;
     fd_set fds;
     struct timeval tv;
     int r;
-    int mode = 0;
+    int mode = 4;
     int grab = 1;
-    int hud = 1;
+    int hud = 0;
+    int pause = 0;
+    int delta = 1;
+    int time = ring_index;
 
-    timecube = malloc(tc_size * 4);
+    timecube = malloc(TC_SIZE);
+    if (timecube == NULL)
+        fatal("Could not allocate memory for timecube");
+
+    for (x = 0; x<TC_SIZE; x+=4) {
+        *((int *) ((char *) (timecube + x))) = 0x80008000; //Black
+    }
 
     while (1) {
         /* Wait for new frame to become available */
@@ -480,7 +482,7 @@ int duration = 640;
         if (-1 == r) {
             if (EINTR == errno)
                 continue;
-            fatal("Select");
+            fatal("Select failed");
         }
         if (0 == r) {
             printf("Select timeout\n");
@@ -490,69 +492,110 @@ int duration = 640;
         if (grab)
             grab_frame();
 
-        int x1 = 3 * width/4;
-        int y1 = 3 * height/4;
+        int x1 = 3 * WIDTH/4;
+        int y1 = 3 * HEIGHT/4;
+
+        if (!pause) {
+            time+=delta;
+        }
 
         /* Create image from timecube */
         int index;
-        for (y = 0; y < height; y++) {
-            for (x=0; x < width; x++) {
+        for (y = 0; y < HEIGHT; y++) {
+            for (x=0; x < WIDTH; x++) {
                  // Cheesy picture-in-picture
                 if (hud && x > x1 && y > y1) {
-                    index = ((y - y1) * 4 * width) + (x - x1) * 4 + (ring_index * frame_size);
+                    index = ((y - y1) * 4 * BPP * WIDTH) + (x - x1) * 4 *  BPP + (ring_index * FRAME_SIZE);
                 }
                 else {
                     switch(mode % 6) {
-                    case 0: 
-                        index = index_of(x, y, ring_index - x) % tc_size; // horizontal slitscan
-                        break;
-                    case 1:
-                        index = index_of(x, y, ring_index - (x/10 + y/10)) % tc_size; // diagonal slitscan
+                    case 1: 
+                        index = index_of(x, y, time - x); // horizontal slitscan
                         break;
                     case 2:
-                        index = index_of(x, y, ring_index - y/10) % tc_size; // vertical slitscan
+                        index = index_of(x, y, time - (x/10 + y/10)); // diagonal slitscan
                         break;
                     case 3:
-                        index = index_of(ring_index, y, x) % tc_size; // lardus effect
+                        index = index_of(x, y, time - y/10); // vertical slitscan
                         break;
                     case 4:
-                        index = index_of(x, ring_index, y) % tc_size; // vertical lardus
+                        index = index_of((time % (2 * WIDTH - 1)) < WIDTH ? time: 2 * WIDTH - 2 - time, y, ring_index + 1 + x); // lardus effect
                         break;
+                    case 5:
+                        index = index_of(x, time, ring_index + 1 + y); // vertical lardus
+                        break;
+                    case 0:
                     default:
-                        index = index_of(x, y, ring_index); // identity
+                        index = index_of(x, y, time); // identity
                     }
                 }
-                if (index < 0) {
-                    index += tc_size;
+                while (index < 0) {
+                    index += TC_SIZE;
                 }
-                *((int32_t *) ((char *) image->data + ((width * y * 4) + x * 4))) = timecube[index];
+
+                /* In packed formats, there are two types of pixel U and V -- so source and dest either match or don't...*/
+                /* Also XV and V4L modes have different byte orders within the macro pixel */
+
+                if ((x % 2) == ((index/2) % 2)) {
+                    *(((char *)  image->data + ((WIDTH * y * BPP) + x * BPP ))) = timecube[(index + 1) % TC_SIZE];
+                    *(((char *) image->data + ((WIDTH * y * BPP) + x * BPP + 1))) = timecube[index % TC_SIZE];
+                }
+                else {
+                    *(((char *) image->data + ((WIDTH * y * BPP) + x * BPP ))) = timecube[(index + 3) % TC_SIZE];
+                    *(((char *)  image->data + ((WIDTH * y * BPP) + x * BPP + 1))) = timecube[index % TC_SIZE];
+                }
             }
         }
-
         /* Push it out to Xv */
         push_frame();
 
-        if (grab) {
-            ring_index++;
-            if (ring_index == duration)
-                ring_index = 0;
-        }
+
         /* Check for keypress */
         while (XPending(dpy)) {
             XNextEvent(dpy, &event);
             if (event.type == KeyPress) {
                 XKeyEvent *kev = (XKeyEvent *) &event;
                 unsigned int keycode = kev->keycode;
-                if (keycode == 9) // escape
+                switch (keycode) {
+                /* escape */
+                case 24:
+                case 9:
                     return;
-                if (keycode == 43) // h key
-                    hud = !hud;
-                if (keycode == 42) // g gkey
-                    grab = !grab;
-                if (keycode == 58) // M key
+                /* p */
+                case 33:
+                    pause = ! pause;
+                    if (!pause) {
+                        time = ring_index;
+                    }
+                    break;
+                /* h */
+                case 43:
+                    hud = ! hud;
+                    break;
+                /* g */
+                case 42:
+                    grab = ! grab;
+                    if (grab)
+                        time = ring_index;
+                    break;
+                /* m */
+                case 58:
                     mode++;
-                if (keycode == 41) // f key
+                    break;
+                /* f */
+                case 41:
                     toggle_fullscreen();
+                    break;
+                case 21:
+                    delta++;
+                    break;
+                case 20:
+                    delta--;
+                    break;
+                default:
+                    debug("Invalid keypress %d", keycode);
+                    print_help();
+                }
             }
         }
     }
@@ -582,6 +625,7 @@ int main(int argc, char* argv[]) {
     create_window();
     start_capture();
     // allocate buffers? prepare map?
+    print_help();
     main_loop();
     stop_capture();
     destroy_window();
