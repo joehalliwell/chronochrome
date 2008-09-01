@@ -62,6 +62,7 @@ extern XvImage  *XvShmCreateImage(Display*, XvPortID, int, char*, int, int, XShm
 #define BPP 2
 #define FRAME_SIZE ((WIDTH * HEIGHT * BPP))
 #define TC_SIZE (FRAME_SIZE * NUM_FRAMES)
+#define NUM_MODES 10
 
 unsigned char *timecube;
 int ring_index = -1;
@@ -469,17 +470,30 @@ void main_loop() {
     }
 
     /* Prepare the logo */
-    FIBITMAP *logo = FreeImage_Load(FIF_BMP, "logo.bmp", BMP_DEFAULT);
-    int w = FreeImage_GetWidth(logo);
-    int h = FreeImage_GetHeight(logo);
-    unsigned char *logo_mask = malloc(w*h);
+    FIBITMAP *bmp = FreeImage_Load(FIF_BMP, "logo.bmp", BMP_DEFAULT);
+    int logo_w = FreeImage_GetWidth(bmp);
+    int logo_h = FreeImage_GetHeight(bmp);
+    unsigned char *logo = malloc(logo_w*logo_h);
     RGBQUAD value;
-    for (y = 0; y < h; y++) {
-        for (x = 0; x<w; x++) {
-            FreeImage_GetPixelColor(logo, x, y, &value);
-            logo_mask[(h-1-y)*w + x] = value.rgbRed & 0xff;
+    for (y = 0; y < logo_h; y++) {
+        for (x = 0; x < logo_w; x++) {
+            FreeImage_GetPixelColor(bmp, x, y, &value);
+            logo[(logo_h-1-y)*logo_w + x] = value.rgbRed & 0xff;
         }
     }
+    FreeImage_Unload(bmp);
+
+    bmp = FreeImage_Load(FIF_BMP, "map.bmp", BMP_DEFAULT);
+    if (WIDTH != FreeImage_GetWidth(bmp) || HEIGHT != FreeImage_GetHeight(bmp))
+        fatal("Map has wrong size");
+    int *map_mask = malloc(WIDTH * HEIGHT * sizeof(int)); 
+    for (y = 0; y < HEIGHT; y++) {
+        for (x = 0; x < WIDTH; x++) {
+            FreeImage_GetPixelColor(bmp, x, y, &value);
+            map_mask[(HEIGHT - 1 - y)*WIDTH + x] = ((value.rgbRed >> 1) << 2) + ((value.rgbGreen >> 1)<<1) + (value.rgbBlue >> 1);
+        }
+    }
+    FreeImage_Unload(bmp);
 
     while (1) {
         /* Wait for new frame to become available */
@@ -494,7 +508,7 @@ void main_loop() {
             fatal("Select failed");
         }
         if (0 == r) {
-            debug("Select timeout\n");
+            debug("Select timeout");
             continue;
         }
 
@@ -523,7 +537,7 @@ void main_loop() {
                 else {
                     switch(mode) {
                     case 1:
-                        index = index_of(x, y, time - x); // horizontal slitscan
+                        index = index_of(x, y, time - (x/10)); // horizontal slitscan
                         break;
                     case 2:
                         index = index_of(x, y, time - (x/10 + y/10)); // diagonal slitscan
@@ -536,6 +550,18 @@ void main_loop() {
                         break;
                     case 5:
                         index = index_of(x, time, ring_index + 1 + y); // vertical lardus
+                        break;
+                    case 6:
+                        index = index_of(x, y, time - x); // horizontal slitscan
+                        break;
+                    case 7:
+                        index = index_of(x, y, time - (x + y)); // diagonal slitscan
+                        break;
+                    case 8:
+                        index = index_of(x, y, time - y); // vertical slitscan
+                        break;
+                    case 9:
+                        index = index_of(x, y, (time - map_mask[y * WIDTH + x]));
                         break;
                     case 0:
                     default:
@@ -562,11 +588,11 @@ void main_loop() {
         }
 
         /* Composite logo */
-        for (y = 0; y<h; y++) {
-            for (x = 0; x<w; x++) {
-                r =  *(((unsigned char *) image -> data + ((WIDTH * (y + 5) * BPP) + (WIDTH - 5 - w + x) * BPP + 1)));
-                r += logo_mask[y * w + x]/2;
-                *(((unsigned char *) image -> data + ((WIDTH * (y + 5) * BPP) + (WIDTH - 5 - w + x) * BPP + 1))) = r>0xff?0xff:r;
+        for (y = 0; y<logo_h; y++) {
+            for (x = 0; x<logo_w; x++) {
+                r =  *(((unsigned char *) image -> data + ((WIDTH * (y + 5) * BPP) + (WIDTH - 5 - logo_w + x) * BPP + 1)));
+                r += logo[y * logo_w + x]/2;
+                *(((unsigned char *) image -> data + ((WIDTH * (y + 5) * BPP) + (WIDTH - 5 - logo_w + x) * BPP + 1))) = r>0xff?0xff:r;
             }
         }
 
@@ -608,17 +634,19 @@ void main_loop() {
                     break;
                 /* m */
                 case 58:
-                    mode = (mode + 1) % 6;
+                    mode = (mode + 1) % NUM_MODES;
                     debug("Switching to mode %d", mode);
                     break;
                 /* f */
                 case 41:
                     toggle_fullscreen();
                     break;
+                /* + */
                 case 21:
                     delta++;
                     debug("Delta %d", delta);
                     break;
+                /* - */
                 case 20:
                     delta--;
                     debug("Delta %d", delta);
