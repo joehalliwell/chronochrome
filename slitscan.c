@@ -439,11 +439,14 @@ void push_frame() {
 
 void print_help() {
     char *help_text = \
-        "  q - Exit\n"
-        "  f - Toggle fullscreen\n"
-        "  g - Toggle framegrab\n"
-        "  h - Toggle HUD\n"
-        "  m - Switch mode\n";
+        "  q    Exit\n"
+        "  f    Toggle fullscreen\n"
+        "  g    Toggle framegrab\n"
+        "  p    Toggle animation timer\n"
+        "  h    Toggle HUD\n"
+        "  l    Toggle logo\n"
+        "  m,n  Switch mode (up, down)\n"
+        "  +,-  Adjust timer speed (faster, slower)\n";
     printf("Commands:\n%s", help_text);
 }
 
@@ -462,7 +465,9 @@ void main_loop() {
     int hud = 0;
     int pause = 0;
     int delta = 1;
+    int die = 0;
     int time = ring_index;
+    int show_logo = 1;
 
     /* Clear buffer to UYVY black */
     for (x = 0; x<TC_SIZE; x+=4) {
@@ -478,7 +483,7 @@ void main_loop() {
     for (y = 0; y < logo_h; y++) {
         for (x = 0; x < logo_w; x++) {
             FreeImage_GetPixelColor(bmp, x, y, &value);
-            logo[(logo_h-1-y)*logo_w + x] = value.rgbRed & 0xff;
+            logo[(logo_h-1-y)*logo_w + x] = value.rgbRed;
         }
     }
     FreeImage_Unload(bmp);
@@ -486,16 +491,16 @@ void main_loop() {
     bmp = FreeImage_Load(FIF_BMP, "map.bmp", BMP_DEFAULT);
     if (WIDTH != FreeImage_GetWidth(bmp) || HEIGHT != FreeImage_GetHeight(bmp))
         fatal("Map has wrong size");
-    int *map_mask = malloc(WIDTH * HEIGHT * sizeof(int)); 
+    int *map = malloc(WIDTH * HEIGHT * sizeof(int)); 
     for (y = 0; y < HEIGHT; y++) {
         for (x = 0; x < WIDTH; x++) {
             FreeImage_GetPixelColor(bmp, x, y, &value);
-            map_mask[(HEIGHT - 1 - y)*WIDTH + x] = ((value.rgbRed >> 1) << 2) + ((value.rgbGreen >> 1)<<1) + (value.rgbBlue >> 1);
+            map[(HEIGHT - 1 - y)*WIDTH + x] = ((value.rgbRed >> 1) << 2) + ((value.rgbGreen >> 1)<<1) + (value.rgbBlue >> 1);
         }
     }
     FreeImage_Unload(bmp);
 
-    while (1) {
+    while (!die) {
         /* Wait for new frame to become available */
         FD_ZERO(&fds);
         FD_SET(fd, &fds);
@@ -561,7 +566,7 @@ void main_loop() {
                         index = index_of(x, y, time - y); // vertical slitscan
                         break;
                     case 9:
-                        index = index_of(x, y, (time - map_mask[y * WIDTH + x]));
+                        index = index_of(x, y, (time - map[y * WIDTH + x]));
                         break;
                     case 0:
                     default:
@@ -586,16 +591,16 @@ void main_loop() {
                 }
             }
         }
-
-        /* Composite logo */
-        for (y = 0; y<logo_h; y++) {
-            for (x = 0; x<logo_w; x++) {
-                r =  *(((unsigned char *) image -> data + ((WIDTH * (y + 5) * BPP) + (WIDTH - 5 - logo_w + x) * BPP + 1)));
-                r += logo[y * logo_w + x]/2;
-                *(((unsigned char *) image -> data + ((WIDTH * (y + 5) * BPP) + (WIDTH - 5 - logo_w + x) * BPP + 1))) = r>0xff?0xff:r;
+        if (show_logo) {
+            /* Composite logo */
+            for (y = 0; y<logo_h; y++) {
+                for (x = 0; x<logo_w; x++) {
+                    r =  *(((unsigned char *) image -> data + ((WIDTH * (y + 5) * BPP) + (WIDTH - 5 - logo_w + x) * BPP + 1)));
+                    r += logo[y * logo_w + x]/2;
+                    *(((unsigned char *) image -> data + ((WIDTH * (y + 5) * BPP) + (WIDTH - 5 - logo_w + x) * BPP + 1))) = r>0xff?0xff:r;
+                }
             }
         }
-
         /* Push it out to Xv */
         push_frame();
 
@@ -603,15 +608,17 @@ void main_loop() {
         /* Check for keypress */
         while (XPending(dpy)) {
             XNextEvent(dpy, &event);
-            if (event.type == KeyPress) {
-                XKeyEvent *kev = (XKeyEvent *) &event;
-                unsigned int keycode = kev->keycode;
-                switch (keycode) {
-                /* escape */
+            if (event.type != KeyPress)
+                continue;
+            XKeyEvent *kev = (XKeyEvent *) &event;
+            unsigned int keycode = kev->keycode;
+            switch (keycode) {
+                /* escape/q */
                 case 24:
                 case 9:
                     debug("Bye!");
-                    return;
+                    die = 1;
+                    break;
                 /* p */
                 case 33:
                     pause = ! pause;
@@ -632,9 +639,20 @@ void main_loop() {
                     if (grab)
                         time = ring_index;
                     break;
+                /* l */
+                case 46:
+                    show_logo = ! show_logo;
+                    break;
                 /* m */
                 case 58:
                     mode = (mode + 1) % NUM_MODES;
+                    debug("Switching to mode %d", mode);
+                    break;
+                /* n */
+                case 57:
+                    mode = mode - 1;
+                    if (mode < 0)
+                        mode = NUM_MODES - 1;
                     debug("Switching to mode %d", mode);
                     break;
                 /* f */
@@ -658,10 +676,11 @@ void main_loop() {
                 default:
                     debug("Invalid keypress %d", keycode);
                     print_help();
-                }
             }
         }
     }
+    free(logo);
+    free(map);
 }
 
 void stop_capture() {
