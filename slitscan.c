@@ -1,11 +1,9 @@
 /*
  * gcc -o slitscan slitscan.c  -L/usr/X11R6/lib -lX11 -lXext -lXv -lfreeimage -O3
  * TODO:
- * - Pick up XV port correctly
  * - FPS monitoring
  * - Break into separate files (main, xv, camera)
  * - Add frame dumping (BMP?)
- * - Add watermarking
  */
 
 #include <stdlib.h>
@@ -528,7 +526,7 @@ void main_loop() {
             time += delta;
         }
 
-        int xb_time = (time%(2*WIDTH - 2))<WIDTH?(time%(2*WIDTH - 2)):2*WIDTH - 2 - (time%(2*WIDTH - 2));
+        int xb_time = (time%(2*WIDTH - 4))<WIDTH?(time%(2*WIDTH - 4))+1:2*WIDTH - 4 - (time%(2*WIDTH - 4))+1;
         //debug("%d - %d", time, xb_time);
 
         /* Create image from timecube */
@@ -542,13 +540,13 @@ void main_loop() {
                 else {
                     switch(mode) {
                     case 1:
-                        index = index_of(x, y, time - (x/10)); // horizontal slitscan
+                        index = index_of(x, y, time - (x/10)); // rapid horizontal slitscan
                         break;
                     case 2:
-                        index = index_of(x, y, time - (x/10 + y/10)); // diagonal slitscan
+                        index = index_of(x, y, time - (x/10 + y/10)); // rapid diagonal slitscan
                         break;
                     case 3:
-                        index = index_of(x, y, time - y/10); // vertical slitscan
+                        index = index_of(x, y, time - y/10); // rapid vertical slitscan
                         break;
                     case 4:
                         index = index_of(xb_time, y, ring_index + 1 + x); // lardus effect
@@ -566,7 +564,7 @@ void main_loop() {
                         index = index_of(x, y, time - y); // vertical slitscan
                         break;
                     case 9:
-                        index = index_of(x, y, (time - map[y * WIDTH + x]));
+                        index = index_of(x, y, (time - map[y * WIDTH + x])); // displacement map
                         break;
                     case 0:
                     default:
