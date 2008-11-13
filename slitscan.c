@@ -535,7 +535,7 @@ void main_loop() {
             for (x=0; x < WIDTH; x++) {
                  // Cheesy picture-in-picture
                 if (hud && x > x1 && y > y1) {
-                    index = ((y - y1) * 4 * BPP * WIDTH) + (x - x1) * 4 *  BPP + (ring_index * FRAME_SIZE);
+                    index = ((y - y1) * 4 * BPP * WIDTH) + (WIDTH - x) * 4 *  BPP + (ring_index * FRAME_SIZE);
                 }
                 else {
                     switch(mode) {
@@ -602,7 +602,12 @@ void main_loop() {
         /* Push it out to Xv */
         push_frame();
 
-
+        if (time % 5000 == 0) {
+                    mode = mode + 1;
+                    if (mode > 6)
+                        mode = 1; /* Don't switch to monitor mode */
+                    debug("Switching to mode %d", mode);
+        }
         /* Check for keypress */
         while (XPending(dpy)) {
             XNextEvent(dpy, &event);
@@ -704,7 +709,6 @@ int main(int argc, char* argv[]) {
     init_camera();
     create_window();
     start_capture();
-    // allocate buffers? prepare map?
     print_help();
     timecube = malloc(TC_SIZE);
     if (timecube == NULL)
