@@ -472,7 +472,7 @@ void main_loop() {
         *((int *) ((char *) (timecube + x))) = 0x80008000; //Black
     }
 
-    /* Prepare the logo */
+    /* Load the logo image */
     FIBITMAP *bmp = FreeImage_Load(FIF_BMP, "logo.bmp", BMP_DEFAULT);
     int logo_w = FreeImage_GetWidth(bmp);
     int logo_h = FreeImage_GetHeight(bmp);
@@ -486,6 +486,7 @@ void main_loop() {
     }
     FreeImage_Unload(bmp);
 
+    /* Load the map image */
     bmp = FreeImage_Load(FIF_BMP, "map.bmp", BMP_DEFAULT);
     if (WIDTH != FreeImage_GetWidth(bmp) || HEIGHT != FreeImage_GetHeight(bmp))
         fatal("Map has wrong size");
